@@ -7,6 +7,9 @@ folder you run from, so never run them from inside your agent's skills folder.
 
 ## Installing by hand
 
+The scripts need Git, Bash and Python 3.9 or newer. They are tested on macOS
+and Linux. Windows has no Bash of its own, so it is untested there.
+
 Agents that can run commands, such as Claude Code and Codex, can install the
 skill when you give them the repository link. To do it yourself, clone the repository into your agent's skills folder. Pick the line
 for your agent:

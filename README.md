@@ -7,13 +7,6 @@ measure. It makes one change at a time, scores each change on examples the
 agent does not see, keeps the changes that improve the score and undoes the
 rest. Every attempt is recorded.
 
-## Requirements
-
-- macOS or Linux
-- Git, Bash and Python 3.9 or newer
-- An AI coding agent that can use skills, such as Claude Code or Codex,
-  installed and signed in
-
 ## Install
 
 Ask your agent:
