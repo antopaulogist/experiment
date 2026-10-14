@@ -2,123 +2,109 @@
 
 [![Tests](https://github.com/antopaulogist/experiment/actions/workflows/tests.yml/badge.svg)](https://github.com/antopaulogist/experiment/actions/workflows/tests.yml)
 
-When you ask your AI agent to make something better, this skill makes it prove
-the change helps before it keeps it.
+An AI agent skill that tests whether a change improves a result you can
+measure. It makes one change at a time, scores each change on examples the
+agent does not see, keeps the changes that improve the score and undoes the
+rest. Every attempt is recorded.
 
-It works with AI coding agents such as Claude Code and Codex. You need to know
-what you want improved and what a right answer looks like. You do not need to
-know how to write tests or scoring code: the agent sets that up with you.
+## Requirements
 
-## An example
+- macOS or Linux
+- Git, Bash and Python 3.9 or newer
+- An AI coding agent that can use skills, such as Claude Code or Codex,
+  installed and signed in
 
-This is an invented example. On Saturday you are building a help chatbot for a
-bike shop's website. Customers ask things like "Are you open on Sunday?" and
-"How much is a puncture repair?", and the bot sometimes gets the hours or the
-prices wrong. You open your agent in the project's folder and say:
+## Install
 
-> Use the experiment skill. I want my chatbot's instructions to answer
-> questions about our opening hours and prices correctly, without getting
-> worse at anything else. Try up to five ideas.
+Ask your agent:
 
-The agent asks what a right answer looks like and helps you collect examples:
-a customer question and the answer it should get, such as "Are you open on
-Sunday?" with "Yes, 10am to 4pm" (invented hours). It shuffles them into two
-groups. It may read the first group while it works. The second group stays
-hidden from it, and only the scoring uses it.
+> Install the experiment skill from https://github.com/antopaulogist/experiment
 
-Then it measures your current chatbot on the hidden questions: say 9 of 30
-answers come out wrong. It tries one idea at a time. After each try a script
-checks the result. If fewer answers are wrong and nothing else broke, the
-change stays. If not, the change is undone. When the five tries are used up,
-it tells you where you started, where you ended up, which changes it kept, and
-which ideas failed.
+To install it yourself, see
+[Installing by hand](REFERENCE.md#installing-by-hand).
 
-## Why the hidden examples matter
+## Use
 
-AI agents will usually tell you their change is an improvement. If the agent
-also marks its own work, it can write instructions that answer the exact
-questions it can see, word for word, without getting better at the questions
-customers will really ask.
+1. Ask your agent to use the experiment skill. Say what to improve, what counts
+   as better, and the most tries it may make. For example:
 
-So in this skill the agent never decides what stays. A script scores every
-change on examples the agent did not work on, and keeps the change only if the
-score improves. Every try is written down, kept or not, so you can see what
-was attempted.
+   > Use the experiment skill to make my chatbot answer opening-hours questions
+   > correctly. Try up to five changes.
 
-## First steps
+2. The agent sets up the experiment with you. It needs:
+   - examples with the correct answers, at least 20;
+   - a way to score an answer;
+   - any checks that must keep passing;
+   - the try limit.
 
-1. **Give your agent this page's link** and ask it to install the skill, so
-   it copies the folder to wherever it keeps skills. You can say:
+3. The agent splits the examples into two groups with `lab split`. It may read
+   the first group. The second group, the held-back examples, is stored outside
+   the folder it edits and is used only for scoring. Each group needs at least
+   10 examples.
 
-   > Install the experiment skill from https://github.com/antopaulogist/experiment
+4. The agent scores the current version. This first score is the baseline.
 
-   The skill needs Git, Bash and Python 3.9 or newer, on macOS or Linux. If
-   your agent cannot install skills itself, the commands to do it by hand are
-   in the [reference](REFERENCE.md#installing-by-hand).
+5. The agent makes one change per try. After each try, a script runs the checks
+   and scores the change on the held-back examples. The script keeps the change
+   if the checks pass and the score improves. Otherwise it undoes the change.
 
-2. **Ask your agent in plain words**, and include three things: what to
-   improve, what "better" means, and how many tries it may make. The agent needs
-   the first two to build a fair score, and the number of tries caps what you
-   spend. In Codex you can name the skill as `$experiment`, in Claude Code as
-   `/experiment`, or just mention the experiment skill.
+6. When the tries run out, the agent reports the baseline, the final score, the
+   changes it kept and the ideas that failed.
 
-3. **Give it real examples with the right answers**, because the score is only
-   as good as the examples. You need at least 20, because the split puts at
-   least 10 in each group, and more is better: with few, a change can look
-   better by luck. If you only have the inputs, the agent can
-   draft the right answers with a model for you to check before the run starts.
+7. Review each kept change before you use it. A better score does not prove a
+   change is correct in every case.
 
-4. **Check what it kept before you use it**, because a better score is not
-   proof the change is right in every case. Read the kept change as you would
-   any other edit to your project.
+## Results
 
-## What can go wrong
+Each experiment is stored in `lab/experiments/NAME/`, under the folder the
+agent ran it from:
 
-- **"Better" is hard to score.** When the goal is something like "make it read
-  more naturally", a simple count can reward the wrong thing. Ask the agent to
-  set up a blind comparison judge instead, and check its verdicts against your
-  own on a few examples before the run.
-- **Too few examples.** With a handful, a change can win by luck. Use more, and
-  try kept changes on a fresh set of examples before you rely on them.
-- **The starting measurement fails.** Then the setup is wrong, not your
-  project. The agent should fix the setup before it tries any change.
-- **A run is interrupted.** A stopped run can leave a half-finished record or
-  an unfinished change in its working copy. Check both before you run again.
+| File | Contents |
+|---|---|
+| `results.tsv` | One row per try: time, score, best score so far, verdict and a short note |
+| `attempts/` | One record per try: the idea, the full change, the output and the verdict |
+| `split.json` | The split: seed, held-back share, counts and file fingerprints |
+| `held-back.jsonl` | The held-back examples |
 
-**Warning:** the hidden examples are kept in a separate folder, which only
-hides them by layout. An agent that goes looking can still read them, and the
-commands it runs have your account's permissions. Run experiments on a
-throwaway copy of your project, with agents and commands you trust, so a
-misbehaving try cannot damage your real files.
+To see progress, ask your agent for the experiment's status, or run
+`python3 <skill folder>/scripts/lab status NAME`.
 
-**Cost:** each try is one call to your agent, and a call can involve several
-model turns. Scoring that uses a model, such as running your chatbot on the
-hidden questions or asking a judge, adds calls of its own. Start with a few
-tries and raise the limit once you know what a run costs you.
+## Cost
+
+Each try is one call to your agent, and one call can include several model
+turns. Scoring that uses a model, such as running a chatbot on the held-back
+examples or a judge comparing answers, adds calls of its own. Start with a few
+tries.
+
+## Limits
+
+- The goal needs a score that matches what you want. If "better" is hard to
+  count, ask the agent to set up a blind comparison judge, and check its
+  verdicts against your own on a few examples first.
+- With few examples, a change can score better by luck. Use more examples, and
+  test kept changes on new examples before relying on them.
+- The held-back examples are separated by folder only. An agent that looks for
+  them can still read them, and the commands it runs have your account's
+  permissions. Run experiments on a copy of your project, with agents and
+  commands you trust.
+- If a run is interrupted, it can leave an unfinished record or change. Check
+  both before running again.
 
 The skill has been run end to end with Codex. For Claude Code, the install
-paths were checked against its documentation, but a live run was not tested for
+paths were checked against its documentation; a live run was not tested for
 this release.
 
 ## Reference
 
-[REFERENCE.md](REFERENCE.md) covers setting up an experiment by hand, the
-`lab split` command and its options, writing your own score and check scripts,
-model judges, agent configuration and every setting. The command-line tool is
-`scripts/lab`. The scripts can also run without Claude or Codex: use
-`--agent command` with any command-line tool that accepts a prompt on standard
-input (see [agent configuration](REFERENCE.md#agent-configuration)). The local
-tests run with `python3 scripts/test_lab.py` and need no agent or login.
+[REFERENCE.md](REFERENCE.md) covers installing by hand, setting up an
+experiment without an agent, `lab split` options, writing score and check
+scripts, model judges, agent configuration and all settings. The command-line
+tool is `scripts/lab`. Run the tests with `python3 scripts/test_lab.py`; they
+need no agent or sign-in.
 
 ## Credit
 
-Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch),
-which uses the same loop of trying a change, measuring it and keeping or
-discarding it, with a `program.md` for instructions and a `results.tsv` record.
-This skill lets a script decide what to keep, hides the scoring examples from
-the agent, adds checks that must still pass, judges for goals without a
-built-in number, limits on tries and time, and a lessons file that carries over
-between experiments.
+Inspired by [Karpathy's autoresearch](https://github.com/karpathy/autoresearch).
 
 ## Licence
 
