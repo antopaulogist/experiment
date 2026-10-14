@@ -1,0 +1,12 @@
+.DS_Store
+__pycache__/
+*.pyc
+
+# Experiment records and disposable runs belong outside the skill.
+/lab/
+/toy-*/
+/.lab-test-*/
+/.toy-test-*/
+/.judge-test-*/
+/.split-test-*/
+/.lab-cli-*/

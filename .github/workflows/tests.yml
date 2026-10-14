@@ -1,0 +1,29 @@
+name: Tests
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.9', '3.12']
+        exclude:
+          # GitHub's Apple-silicon Mac runners may not offer 3.9; Linux covers it.
+          - os: macos-latest
+            python: '3.9'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Test from the skill folder
+        run: python3 scripts/test_lab.py
+      - name: Test from outside the skill folder
+        working-directory: ${{ runner.temp }}
+        run: python3 "$GITHUB_WORKSPACE/scripts/test_lab.py"

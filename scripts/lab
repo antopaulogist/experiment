@@ -1,0 +1,481 @@
+#!/usr/bin/env python3
+"""Keep-or-bin experiments. Default root: ./lab; override with LAB_HOME or --lab-home.
+Run each experiment in a dedicated, disposable Git working copy.
+"""
+import argparse, datetime as dt, fnmatch, hashlib, json, math, os, random, re, shlex, shutil, subprocess, sys, time
+sys.dont_write_bytecode = True
+from agents import ask, execute, DEFAULT_MODELS
+from pathlib import Path
+from decimal import Decimal
+
+SKILL = Path(__file__).resolve().parent.parent
+LAB = Path(os.environ.get("LAB_HOME", "./lab")).resolve()
+EXP = LAB / "experiments"
+TEMPLATE = SKILL / "template"
+
+
+def outside_skill(path):
+    path = Path(path).resolve()
+    if path == SKILL or SKILL in path.parents:
+        raise ValueError("experiment and working copy must be outside the skill folder")
+    return path
+
+
+def sh(cmd, cwd, timeout=None, env=None):
+    code, out, err = execute(cmd, cwd, timeout, shell=True)
+    return code, out + err
+
+
+def git(args, cwd):
+    return sh("git " + args, cwd)
+
+
+def load(name, require_metric=True):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", name):
+        raise ValueError("name must contain only letters, numbers, underscores and hyphens")
+    d = outside_skill(EXP / name)
+    cfg = json.loads((d / "experiment.json").read_text())
+    outside_skill(cfg["workdir"])
+    if cfg.get("direction") not in ("lower", "higher"):
+        raise ValueError("direction must be lower or higher")
+    if require_metric and not cfg.get("metric_cmd"):
+        raise ValueError("configure metric_cmd first")
+    return d, cfg
+
+
+def split_paths(d, cfg):
+    """Resolve paths before checking boundaries, including parent symlinks."""
+    wd = outside_skill(cfg["workdir"])
+    d = outside_skill(d)
+    if d == wd or wd in d.parents:
+        raise ValueError("split records and held-back cases must be outside the working copy")
+    paths = {"development": wd / "development.jsonl", "held_back": d / "held-back.jsonl",
+             "record": d / "split.json"}
+    for name, path in paths.items():
+        resolved = outside_skill(path)
+        if name != "development" and (resolved == wd or wd in resolved.parents):
+            raise ValueError("held-back cases and split records must be outside the working copy")
+        if path.is_symlink():
+            raise ValueError(f"split destination must not be a symlink: {path}")
+        if path.exists() and not path.is_file():
+            raise ValueError(f"split destination must be a file: {path}")
+    return paths
+
+
+def file_hash(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def cmd_split(a):
+    d, cfg = load(a.name, require_metric=False)
+    paths = split_paths(d, cfg)
+    if rows(d):
+        raise ValueError("a baseline already exists; create a new experiment to change the split")
+    if not math.isfinite(a.held_back_share) or not 0 < a.held_back_share < 1:
+        raise ValueError("held-back share must be a fraction greater than 0 and less than 1")
+    source = Path(a.cases).expanduser().resolve()
+    wd = Path(cfg["workdir"]).resolve()
+    if source == wd or wd in source.parents:
+        raise ValueError("move the full pool of cases outside the working copy before splitting")
+    if source in paths.values():
+        raise ValueError("the source must not be a split destination")
+    for path in paths.values():
+        if path.exists() and not a.force:
+            raise ValueError(f"{path} already exists; use --force to replace the split before baseline")
+    raw = source.read_bytes()
+    cases, ids = [], set()
+    for n, line in enumerate(raw.decode("utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            case = json.loads(line)
+            # Reject non-JSON numbers too, including inside nested answers.
+            json.dumps(case, allow_nan=False)
+        except ValueError:
+            raise ValueError(f"line {n}: expected a valid JSON object") from None
+        if not isinstance(case, dict):
+            raise ValueError(f"line {n}: expected a JSON object with an id")
+        ident = case.get("id")
+        if type(ident) not in (str, int) or (isinstance(ident, str) and not ident.strip()):
+            raise ValueError(f"line {n}: missing or invalid id; use a nonempty string or integer")
+        if str(ident) in ids:
+            raise ValueError(f"line {n}: duplicate id")
+        ids.add(str(ident))
+        cases.append(case)
+    held_count = math.floor(len(cases) * Decimal(str(a.held_back_share)))
+    dev_count = len(cases) - held_count
+    if min(held_count, dev_count) < 10:
+        raise ValueError(f"each group needs at least 10 examples; this split gives "
+                         f"{dev_count} development and {held_count} held-back examples. "
+                         "Add examples or adjust --held-back-share.")
+    random.Random(a.seed).shuffle(cases)
+    groups = {"development": cases[held_count:], "held_back": cases[:held_count]}
+    contents = {key: "".join(json.dumps(case, ensure_ascii=False, sort_keys=True) + "\n"
+                             for case in group).encode("utf-8") for key, group in groups.items()}
+    record = {"version": 1, "seed": a.seed, "held_back_share": a.held_back_share,
+              "source": {"count": len(cases), "sha256": hashlib.sha256(raw).hexdigest()}}
+    for key, data in contents.items():
+        record[key] = {"path": str(paths[key]), "count": len(groups[key]),
+                       "sha256": hashlib.sha256(data).hexdigest()}
+    contents["record"] = (json.dumps(record, indent=2) + "\n").encode("utf-8")
+    for key, data in contents.items():
+        with paths[key].open("wb" if a.force else "xb") as output:
+            output.write(data)
+    print(f"split seed {a.seed}; held-back share {a.held_back_share:g}\n"
+          f"development: {dev_count} examples -> {paths['development']}\n"
+          f"held-back: {held_count} examples -> {paths['held_back']}\n"
+          f"record: {paths['record']}")
+
+
+def checked_split(d, cfg):
+    """Manual splits remain valid; recorded splits must still match their files."""
+    if not (d / "split.json").exists():
+        return None
+    paths = split_paths(d, cfg)
+    record = json.loads(paths["record"].read_text())
+    for key in ("development", "held_back"):
+        item = record[key]
+        if item["path"] != str(paths[key]) or item["sha256"] != file_hash(paths[key]):
+            raise ValueError(f"{key} cases differ from split.json; restore them or create a new experiment")
+    return record
+
+
+def last_number(text):
+    try:
+        value = float(text.strip().splitlines()[-1])
+        return value if math.isfinite(value) else None
+    except (ValueError, IndexError):
+        return None
+
+
+def better(new, old, direction, eps):
+    if old is None:
+        return True
+    return new < old - eps if direction == "lower" else new > old + eps
+
+
+def rows(d):
+    f = d / "results.tsv"
+    if not f.exists():
+        return []
+    out = []
+    for line in f.read_text().splitlines()[1:]:
+        p = line.split("\t")
+        out.append({"n": int(p[0]), "at": p[1], "score": None if p[2] == "" else float(p[2]),
+                    "best": None if p[3] == "" else float(p[3]), "verdict": p[4], "note": p[5] if len(p) > 5 else ""})
+    return out
+
+
+def add_row(d, n, score, best, verdict, note):
+    f = d / "results.tsv"
+    if not f.exists():
+        f.write_text("n\tat\tscore\tbest\tverdict\tnote\n")
+    note = re.sub(r"\s+", " ", note)[:200]
+    with f.open("a") as fh:
+        fh.write(f"{n}\t{dt.datetime.now().isoformat(timespec='seconds')}\t"
+                 f"{'' if score is None else score}\t{'' if best is None else best}\t{verdict}\t{note}\n")
+
+
+def measure(cfg, workdir):
+    """Guards first, then the metric. Returns (score or None, guard_ok, guard_out, metric_out)."""
+    g_ok, g_out = True, ""
+    if cfg.get("guard_cmd"):
+        code, g_out = sh(cfg["guard_cmd"], workdir, timeout=cfg.get("guard_timeout", 1800))
+        g_ok = code == 0
+        if not g_ok:
+            return None, False, g_out, ""
+    code, m_out = sh(cfg["metric_cmd"], workdir, timeout=cfg.get("metric_timeout", 1800))
+    score = last_number(m_out) if code == 0 else None
+    return score, g_ok, g_out, m_out
+
+
+def net_lines_removed(cfg, workdir):
+    """Lines removed minus lines added in the editable files: positive when a change shrinks the code."""
+    _, out = git("diff HEAD --numstat", workdir)
+    editable = cfg.get("editable") or ["*"]
+    net = 0
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3 or parts[0] == "-" or not any(fnmatch.fnmatch(parts[2], pat) for pat in editable):
+            continue
+        net += int(parts[1]) - int(parts[0])
+    return net
+
+
+def touched_outside(cfg, workdir):
+    """Files the attempt changed that it was not allowed to change."""
+    _, out = git("diff HEAD --name-only --no-renames -z", workdir)
+    files = [f for f in out.split("\0") if f]
+    editable = cfg.get("editable") or ["*"]
+    frozen = cfg.get("frozen") or []
+    bad = []
+    for f in files:
+        if f == "ATTEMPT.md":
+            continue
+        if any(fnmatch.fnmatch(f, pat) for pat in frozen) or not any(fnmatch.fnmatch(f, pat) for pat in editable):
+            bad.append(f)
+    return bad
+
+
+def cmd_new(a):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", a.name):
+        raise ValueError("invalid experiment name")
+    d = outside_skill(EXP / a.name)
+    if d.exists():
+        sys.exit(f"{d} already exists")
+    (d / "attempts").mkdir(parents=True)
+    shutil.copy(TEMPLATE / "program.md", d / "program.md")
+    workdir = outside_skill(Path(a.workdir).expanduser())
+    if a.repo:
+        branch = f"lab/{a.name}"
+        code, out = git(f"worktree add -b {branch} {shlex.quote(str(workdir))} {shlex.quote(a.base or 'HEAD')}", Path(a.repo).expanduser())
+        if code:
+            sys.exit(out)
+    else:
+        workdir.mkdir(parents=True, exist_ok=True)
+        if not (workdir / ".git").exists():
+            git("init -q -b lab-work", workdir)
+            git("add -A", workdir)
+            git("-c user.name=lab -c user.email= commit -q --allow-empty -m 'lab: start'", workdir)
+    gd = sh("git rev-parse --git-common-dir", workdir)[1].strip()
+    excl = (workdir / gd / "info" / "exclude") if gd else None
+    if excl:
+        excl.parent.mkdir(parents=True, exist_ok=True)
+        extra = "ATTEMPT.md\n__pycache__/\n*.pyc\n.DS_Store\n"
+        excl.write_text((excl.read_text() + "\n" if excl.exists() else "") + extra)
+    cfg = {"name": a.name, "workdir": str(workdir), "metric_cmd": "", "guard_cmd": "",
+           "direction": "lower", "epsilon": 0.0, "editable": ["*"], "frozen": [],
+           "agent": a.agent, "command": None, "model": DEFAULT_MODELS[a.agent], "effort": "medium", "try_timeout": 2400,
+           "metric_timeout": 1800, "guard_timeout": 1800, "target": None, "on_keep_cmd": None, "keep_simpler_within": None}
+    (d / "experiment.json").write_text(json.dumps(cfg, indent=2) + "\n")
+    print(f"created {d}\nworking copy {workdir}\nnext: fill program.md and experiment.json, then `lab baseline {a.name}`")
+
+
+def cmd_baseline(a):
+    d, cfg = load(a.name)
+    wd = Path(cfg["workdir"])
+    if rows(d):
+        raise ValueError("baseline already recorded; create a fresh experiment")
+    require_clean(wd)
+    split = checked_split(d, cfg)
+    split_note = ""
+    if split:
+        (d / "baseline-split.json").write_text(json.dumps(split, indent=2) + "\n")
+        split_note = (f"## Split\nseed: {split['seed']}\n"
+                      f"development: {split['development']['count']} examples; "
+                      f"SHA-256 {split['development']['sha256']}\n"
+                      f"held-back: {split['held_back']['count']} examples; "
+                      f"SHA-256 {split['held_back']['sha256']}\n\n")
+    score, g_ok, g_out, m_out = measure(cfg, wd)
+    _, dirty = git("status --porcelain", wd)
+    if dirty.strip():
+        score, g_ok = None, False
+        g_out += "\nEvaluator modified the working copy; restore it and create a fresh experiment."
+    (d / "attempts" / "000-baseline.md").write_text(
+        f"# Baseline\n\nguards: {'pass' if g_ok else 'FAIL'}\nscore: {score}\n\n{split_note}## Guard output\n```\n{g_out}\n```\n\n## Metric output\n```\n{m_out}\n```\n")
+    add_row(d, 0, score, score, "baseline" if g_ok and score is not None else "baseline-broken", "")
+    print(f"baseline score {score} guards {'pass' if g_ok else 'FAIL'}")
+    if split:
+        print(f"split seed {split['seed']}: {split['development']['count']} development, "
+              f"{split['held_back']['count']} held-back; hashes in baseline-split.json")
+    if not g_ok or score is None:
+        raise SystemExit(1)
+
+
+def prompt_for(d, cfg, best):
+    hist = rows(d)[-60:]
+    ledger = "\n".join(f"#{r['n']} {r['verdict']} score={r['score']} note={r['note']}" for r in hist)
+    recent = sorted((d / "attempts").glob("*.md"))[-3:]
+    raw = "\n\n".join(f"--- {p.name} ---\n{p.read_text()[:4000]}" for p in recent)
+    learnings = (d / "lessons.md").read_text() if (d / "lessons.md").exists() else (SKILL / "lessons.md").read_text()
+    simpler = ""
+    if cfg.get("keep_simpler_within") is not None:
+        simpler = (f"A change that removes more lines than it adds is also kept when the score stays within "
+                   f"{cfg['keep_simpler_within']} of the best and the guards pass, so deleting a rule that earns nothing counts.\n")
+    return f"""You are one attempt in an experiment loop. Make ONE change you expect to improve the score, then stop.
+
+THE CONTRACT (program.md):
+{(d / 'program.md').read_text()}
+
+LAB LESSONS FROM EARLIER EXPERIMENTS:
+{learnings}
+
+SCORE: the best so far is {best} ({cfg['direction']} is better). The loop runs the guards and the metric after you finish and keeps your change only if the guards pass and the score beats the best. Do not inspect held-back cases or run the private scoring command.
+{simpler}You may change only files matching {cfg.get('editable')}; never {cfg.get('frozen')}. Never run git commit, reset or checkout: the loop owns git. Do not delegate, start background processes or write outside this working copy.
+
+RECENT ATTEMPTS (ledger):
+{ledger}
+
+RAW RECORD OF THE LAST ATTEMPTS (read before choosing; don't repeat a binned idea unless you change why it failed):
+{raw}
+
+Finish by writing ATTEMPT.md in the working directory: line 1 a one-line summary of the change; then your hypothesis and what you expect the score to do. Your working directory is {cfg['workdir']}."""
+
+
+def require_clean(wd):
+    code, branch = git("symbolic-ref --short HEAD", wd)
+    if code or branch.strip() in ("main", "master"):
+        raise ValueError("use a dedicated experiment branch, never main or master")
+    code, output = git("status --porcelain --untracked-files=all", wd)
+    if code or output.strip():
+        raise ValueError("working copy must be clean before baseline/run")
+
+
+def propose(prompt, cfg, wd):
+    agent = cfg.get("agent", "claude")
+    options = dict(model=cfg.get("model"), effort=cfg.get("effort", "medium"),
+                   cwd=wd, timeout=cfg.get("try_timeout", 2400), edit=True)
+    if agent == "claude":
+        return ask(prompt, agent="claude", **options)
+    elif agent == "codex":
+        return ask(prompt, agent="codex", **options)
+    elif agent == "command":
+        return ask(prompt, agent="command", command=cfg.get("command"), **options)
+    raise ValueError(f"unknown agent: {agent}")
+
+
+def cmd_run(a):
+    d, cfg = load(a.name)
+    wd = Path(cfg["workdir"])
+    hist = rows(d)
+    require_clean(wd)
+    if not hist or hist[0]["verdict"] != "baseline":
+        sys.exit("run `lab baseline` first")
+    split = checked_split(d, cfg)
+    snapshot = d / "baseline-split.json"
+    if snapshot.exists() and split != json.loads(snapshot.read_text()):
+        raise ValueError("split differs from baseline; restore it or create a new experiment")
+    best = next((r["best"] for r in reversed(hist) if r["best"] is not None), None)
+    n = hist[-1]["n"]
+    misses, start = 0, time.time()
+    last_keep = start
+    for _ in range(a.tries):
+        require_clean(wd)
+        if a.minutes and time.time() - start > a.minutes * 60:
+            print("time budget spent"); break
+        if misses >= a.patience:
+            print(f"{misses} binned in a row: stopping"); break
+        if a.stale_minutes and time.time() - last_keep > a.stale_minutes * 60:
+            print(f"no improvement in the last {a.stale_minutes:g} minutes: stopping"); break
+        tgt = cfg.get("target")
+        if tgt is not None and best is not None and (best <= tgt if cfg["direction"] == "lower" else best >= tgt):
+            print(f"target {tgt} reached"); break
+        n += 1
+        p = prompt_for(d, cfg, best)
+        (wd / "ATTEMPT.md").unlink(missing_ok=True)
+        _, base = git("rev-parse HEAD", wd)
+        base = base.strip()
+        try:
+            agent_code, out, err = propose(p, cfg, wd)
+            agent_out = out + err
+        except (OSError, ValueError) as exc:
+            agent_code, agent_out = 1, str(exc)
+        git("add -A", wd)
+        note = ""
+        if (wd / "ATTEMPT.md").exists():
+            note = (wd / "ATTEMPT.md").read_text()
+        _, diff = git(f"diff {base} --no-ext-diff --no-renames", wd)
+        _, added = git(f"diff {base} --name-only --diff-filter=A --no-renames", wd)
+        bad = touched_outside(cfg, wd)
+        _, now = git("rev-parse HEAD", wd)
+        if now.strip() != base:
+            score, g_ok, g_out, m_out, verdict = None, False, "", "", "bin: agent changed git history"
+        elif agent_code:
+            score, g_ok, g_out, m_out, verdict = None, False, "", "", f"bin: agent failed ({agent_code})"
+        elif bad:
+            score, g_ok, g_out, m_out, verdict = None, False, "", "", f"bin: touched {', '.join(bad)[:120]}"
+        elif not diff.strip() and not added.strip():
+            score, g_ok, g_out, m_out, verdict = None, True, "", "", "bin: no change"
+        else:
+            score, g_ok, g_out, m_out = measure(cfg, wd)
+            git("add -A", wd)
+            _, evaluated_diff = git(f"diff {base} --no-ext-diff --no-renames", wd)
+            if evaluated_diff != diff:
+                verdict = "bin: evaluator changed files"
+                diff = evaluated_diff
+            elif not g_ok:
+                verdict = "bin: guards failed"
+            elif score is None:
+                verdict = "bin: metric failed"
+            elif better(score, best, cfg["direction"], cfg.get("epsilon", 0.0)):
+                verdict = "keep"
+            elif (cfg.get("keep_simpler_within") is not None and best is not None
+                  and abs(score - best) <= cfg["keep_simpler_within"] + 1e-9
+                  and not better(best, score, cfg["direction"], cfg["keep_simpler_within"])
+                  and net_lines_removed(cfg, wd) > 0):
+                verdict = "keep: simpler"
+            else:
+                verdict = "bin: no better"
+        summary = note.strip().splitlines()[0] if note.strip() else "(no ATTEMPT.md)"
+        (d / "attempts" / f"{n:03d}.md").write_text(
+            f"# Attempt {n}: {verdict}\n\nscore {score} vs best {best}\n\n## Agent's note\n{note}\n\n"
+            f"## Diff\n```diff\n{diff}\n```\nNew files: {added.strip() or 'none'}\n\n"
+            f"## Guard output\n```\n{g_out}\n```\n\n## Metric output\n```\n{m_out}\n```\n\n"
+            f"## Agent output\n```\n{agent_out}\n```\n")
+        (wd / "ATTEMPT.md").unlink(missing_ok=True)
+        if verdict.startswith("keep"):
+            git("add -A", wd)
+            msg = f"lab {cfg['name']} #{n}: {summary[:120]} ({score})"
+            committed = subprocess.run(["git", "-c", "user.name=lab", "-c", "user.email=", "commit", "-q", "-m", msg],
+                           cwd=wd, capture_output=True, text=True)
+            if committed.returncode:
+                raise RuntimeError("could not commit kept change: " + committed.stderr)
+            best, misses, last_keep = score, 0, time.time()
+            if cfg.get("on_keep_cmd"):
+                hook_code, hook_out = sh(cfg["on_keep_cmd"], wd, timeout=600)
+                with (d / "attempts" / f"{n:03d}.md").open("a") as record:
+                    record.write(f"\n## on_keep_cmd (exit {hook_code})\n{hook_out}\n")
+        else:
+            git(f"reset -q --hard {base}", wd)
+            git("clean -qfd", wd)
+            misses += 1
+        add_row(d, n, score, best, verdict, summary)
+        print(f"#{n} {verdict} score={score} best={best} :: {summary[:100]}", flush=True)
+
+
+def cmd_status(a):
+    d, cfg = load(a.name)
+    r = rows(d)
+    if not r:
+        print("no attempts yet"); return
+    base = r[0]["score"]
+    best = next((x["best"] for x in reversed(r) if x["best"] is not None), None)
+    kept = sum(1 for x in r if x["verdict"].startswith("keep"))
+    tried = sum(1 for x in r if x["verdict"].startswith("keep") or x["verdict"].startswith("bin"))
+    print(f"{cfg['name']}: baseline {base} -> best {best} ({cfg['direction']} is better); "
+          f"{tried} attempts, {kept} kept")
+    for x in r[-10:]:
+        print(f"  #{x['n']} {x['verdict']:<22} {x['score']}  {x['note'][:80]}")
+
+
+def main():
+    global LAB, EXP
+    ap = argparse.ArgumentParser(prog="lab", description=__doc__)
+    ap.add_argument("--lab-home", default=str(LAB), help="experiment root (default ./lab; LAB_HOME overrides)")
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    p = sp.add_parser("new"); p.add_argument("name"); p.add_argument("--workdir", required=True)
+    p.add_argument("--agent", choices=["claude", "codex", "command"], default="claude")
+    p.add_argument("--repo"); p.add_argument("--base")
+    p = sp.add_parser("split", help="split a JSONL pool into development and held-back cases")
+    p.add_argument("name"); p.add_argument("cases")
+    p.add_argument("--seed", type=int, default=0, help="shuffle seed (default 0)")
+    p.add_argument("--held-back-share", type=float, default=0.5, help="held-back fraction (default 0.5)")
+    p.add_argument("--force", action="store_true", help="replace an existing split before baseline")
+    p = sp.add_parser("baseline"); p.add_argument("name")
+    p = sp.add_parser("run"); p.add_argument("name"); p.add_argument("--tries", type=int, default=10)
+    p.add_argument("--patience", type=int, default=5); p.add_argument("--minutes", type=float, default=0)
+    p.add_argument("--stale-minutes", type=float, default=0, help="stop once this long has passed without a kept change")
+    p = sp.add_parser("status"); p.add_argument("name")
+    a = ap.parse_args()
+    LAB = outside_skill(Path(a.lab_home).expanduser())
+    EXP = LAB / "experiments"
+    if a.cmd == "run" and (a.tries < 1 or a.patience < 1 or a.minutes < 0 or a.stale_minutes < 0):
+        ap.error("tries/patience must be positive; time limits must be nonnegative")
+    {"new": cmd_new, "split": cmd_split, "baseline": cmd_baseline, "run": cmd_run, "status": cmd_status}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, OSError, RuntimeError) as exc:
+        sys.exit(str(exc))
