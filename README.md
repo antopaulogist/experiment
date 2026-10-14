@@ -11,32 +11,34 @@ know how to write tests or scoring code: the agent sets that up with you.
 
 ## An example
 
-This is an invented example. On Saturday you are building a small app that
-tidies up voice notes, and times keep coming out as "two pm". You open your
-agent in the app's folder and say:
+This is an invented example. On Saturday you are building a help chatbot for a
+bike shop's website. Customers ask things like "Are you open on Sunday?" and
+"How much is a puncture repair?", and the bot sometimes gets the hours or the
+prices wrong. You open your agent in the project's folder and say:
 
-> Use the experiment skill. I want my clean-up to turn spoken times into
-> numbers, like "two pm" into "2pm", without changing anything else. Try up to
-> five ideas.
+> Use the experiment skill. I want my chatbot's instructions to answer
+> questions about our opening hours and prices correctly, without getting
+> worse at anything else. Try up to five ideas.
 
 The agent asks what a right answer looks like and helps you collect examples:
-a spoken sentence and how it should read after clean-up. It shuffles them into
-two groups. It may read the first group while it works. The second group stays
+a customer question and the answer it should get, such as "Are you open on
+Sunday?" with "Yes, 10am to 4pm" (invented hours). It shuffles them into two
+groups. It may read the first group while it works. The second group stays
 hidden from it, and only the scoring uses it.
 
-Then it measures your current version on the hidden group: say 12 of 24
-examples come out wrong. It tries one idea at a time. After each try a script
-checks the result. If fewer examples are wrong and nothing else broke, the
-change stays. If not, the change is undone. When the five tries are used up, it
-tells you where you started, where you ended up, which changes it kept, and
+Then it measures your current chatbot on the hidden questions: say 9 of 30
+answers come out wrong. It tries one idea at a time. After each try a script
+checks the result. If fewer answers are wrong and nothing else broke, the
+change stays. If not, the change is undone. When the five tries are used up,
+it tells you where you started, where you ended up, which changes it kept, and
 which ideas failed.
 
 ## Why the hidden examples matter
 
 AI agents will usually tell you their change is an improvement. If the agent
-also marks its own work, it can make changes that fix the exact examples in
-front of it without getting better at the job. Your next real voice note is no
-better.
+also marks its own work, it can write instructions that answer the exact
+questions it can see, word for word, without getting better at the questions
+customers will really ask.
 
 So in this skill the agent never decides what stays. A script scores every
 change on examples the agent did not work on, and keeps the change only if the
@@ -64,60 +66,21 @@ was attempted.
    agents that read skills can use the same folder: copy it wherever that agent
    looks for skills, or point it at `SKILL.md`.
 
-2. **Run the toy example first**, so you see a whole run on a tiny project
-   before you trust it with yours. See [Try the toy](#try-the-toy) below.
-
-3. **Ask your agent in plain words**, and include three things: what to
+2. **Ask your agent in plain words**, and include three things: what to
    improve, what "better" means, and how many tries it may make. The agent needs
    the first two to build a fair score, and the number of tries caps what you
    spend. In Codex you can name the skill as `$experiment`, in Claude Code as
    `/experiment`, or just mention the experiment skill.
 
-4. **Give it real examples with the right answers**, because the score is only
+3. **Give it real examples with the right answers**, because the score is only
    as good as the examples. You need at least 20, because the split puts at
    least 10 in each group, and more is better: with few, a change can look
    better by luck. If you only have the inputs, the agent can
    draft the right answers with a model for you to check before the run starts.
 
-5. **Check what it kept before you use it**, because a better score is not
+4. **Check what it kept before you use it**, because a better score is not
    proof the change is right in every case. Read the kept change as you would
    any other edit to your project.
-
-## Try the toy
-
-The toy is a tiny project that turns spoken times into numbers. It has 24
-examples. With the Codex install from step 1, and Codex logged in, run these
-two commands from any folder:
-
-```bash
-bash ~/.agents/skills/experiment/examples/toy/run.sh codex ~/experiment-toy
-python3 ~/.agents/skills/experiment/scripts/lab --lab-home ~/experiment-toy/lab status toy
-```
-
-Choose an output folder that does not exist yet, so nothing of yours is
-touched. It must not be inside the installed skill.
-
-The first command makes a fresh copy of the toy, splits its 24 examples into 12
-the agent can see and 12 hidden ones, scores the starting version, and asks
-Codex for one change. Codex gets up to three minutes, and that call may cost
-you usage with your provider. The second command shows the result. From a real
-run with Codex CLI 0.154.0:
-
-```text
-toy: baseline 12.0 -> best 9.0 (lower is better); 1 attempts, 1 kept
-  #0 baseline               12.0
-  #1 keep                   9.0  Convert spelled-out hours followed by am or pm into compact numeric times.
-```
-
-The score is the number of hidden examples the toy gets wrong, so lower is
-better. The starting version (the baseline) got 12 wrong. Codex's change brought
-that down to 9, so the script kept it. Your run may differ: a run can also end
-with the change undone. If it reports an agent failure, open the attempt records
-under `~/experiment-toy/lab/experiments/toy/` to see what the agent said.
-
-The toy was tested end to end with Codex. For Claude Code, the install paths
-were checked against its documentation, but a live run was not tested for this
-release.
 
 ## What can go wrong
 
@@ -139,8 +102,13 @@ throwaway copy of your project, with agents and commands you trust, so a
 misbehaving try cannot damage your real files.
 
 **Cost:** each try is one call to your agent, and a call can involve several
-model turns. Judges that use a model add calls of their own. Start with a few
+model turns. Scoring that uses a model, such as running your chatbot on the
+hidden questions or asking a judge, adds calls of its own. Start with a few
 tries and raise the limit once you know what a run costs you.
+
+The skill has been run end to end with Codex. For Claude Code, the install
+paths were checked against its documentation, but a live run was not tested for
+this release.
 
 ## Reference
 

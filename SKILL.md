@@ -50,5 +50,3 @@ Finish with the baseline and final numbers, kept changes, useful failed ideas,
 and remaining human checks. Store experiment-specific lessons beside its
 contract; propose only general lessons for the shared lessons file. A kept
 change still needs the project's ordinary review before it is shipped.
-
-For a self-contained first run, use [examples/toy/run.sh](examples/toy/run.sh).

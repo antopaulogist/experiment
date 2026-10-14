@@ -129,8 +129,8 @@ sandbox, no interactive approval, and the experiment's cwd. A `command` agent
 requires a `command` shell string; it receives the prompt on stdin and runs in
 that same cwd. Claude defaults to `sonnet`. For Codex, an omitted or empty
 `model` leaves out `--model`, letting the CLI choose its built-in default
-(user configuration is disabled). Set `model` explicitly, or `MODEL` for the
-toy, to select a model available to your account. Default effort is `medium`.
+(user configuration is disabled). Set `model` explicitly to select a model
+available to your account. Default effort is `medium`.
 
 ### Options and keep-or-bin rules
 
@@ -186,27 +186,3 @@ sandbox are useful boundaries, not a guarantee that evaluation data is secret.
 Custom shell commands have your account's permissions. Use disposable copies
 and trusted commands. Manual interruption or machine failure can leave an
 incomplete record or dirty copy; inspect it and recover before resuming.
-
-## Toy runner
-
-```bash
-bash experiment/examples/toy/run.sh codex ./toy-codex
-# Optional model and attempt count:
-TRIES=2 MODEL=your-model bash experiment/examples/toy/run.sh codex ./toy-more
-```
-
-DIR must not already exist and must be outside the skill. The runner creates a
-fresh spoken-time formatter, a pool of 24 examples, a Git branch named
-`lab-work`, runtime directories and an experiment, all below DIR. It records
-the default 12/12 split with `lab split`, commits and freezes the development
-file, and scores only the held-back file outside the working copy. It records
-baseline plus one try (override with `TRIES=n`) and prints results.tsv even on
-failure. Zero exit means baseline succeeded and every requested try has a
-verdict; an agent failure is a recorded bin, not evidence of an improvement.
-Inspect the attempt's agent output to distinguish CLI failure from a rejected
-proposal. The toy uses your existing CLI login and never touches login files.
-It runs with your normal CLI configuration location; the engine's flags limit
-settings and MCP discovery for each provider. No skill installation or discovery
-is needed for this test.
-The skill itself is never changed. Runtime depends on the provider; each toy
-agent call has a three-minute timeout.
