@@ -47,24 +47,14 @@ was attempted.
 
 ## First steps
 
-1. **Install it** by copying this folder into your agent's skills folder, so
-   your agent can find it. Pick the line for your agent:
+1. **Give your agent this page's link** and ask it to install the skill, so
+   it copies the folder to wherever it keeps skills. You can say:
 
-   ```bash
-   # Codex, for all your projects:
-   git clone https://github.com/antopaulogist/experiment ~/.agents/skills/experiment
-   # Claude Code, for all your projects:
-   git clone https://github.com/antopaulogist/experiment ~/.claude/skills/experiment
-   # Claude Code, for one project (run from that project):
-   git clone https://github.com/antopaulogist/experiment .claude/skills/experiment
-   ```
+   > Install the experiment skill from https://github.com/antopaulogist/experiment
 
-   You need Git, Bash, Python 3.9 or newer, and your agent installed and
-   logged in, on macOS or Linux. These paths come from the
-   [Codex documentation](https://learn.chatgpt.com/docs/build-skills) and the
-   [Claude Code documentation](https://code.claude.com/docs/en/skills). Other
-   agents that read skills can use the same folder: copy it wherever that agent
-   looks for skills, or point it at `SKILL.md`.
+   The skill needs Git, Bash and Python 3.9 or newer, on macOS or Linux. If
+   your agent cannot install skills itself, the commands to do it by hand are
+   in the [reference](REFERENCE.md#installing-by-hand).
 
 2. **Ask your agent in plain words**, and include three things: what to
    improve, what "better" means, and how many tries it may make. The agent needs

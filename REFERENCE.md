@@ -1,9 +1,30 @@
 # Reference
 
-See [README.md](README.md) for installation and a first run. The command-line
+See [README.md](README.md) for what the skill does and how to start. The command-line
 tool is `scripts/lab`. Run the commands below from your own project folder, with
 the skill path adjusted to where you installed it. Experiments are created in the
 folder you run from, so never run them from inside your agent's skills folder.
+
+## Installing by hand
+
+Agents that can run commands, such as Claude Code and Codex, can install the
+skill when you give them the repository link. To do it yourself, clone the repository into your agent's skills folder. Pick the line
+for your agent:
+
+```bash
+# Codex, for all your projects:
+git clone https://github.com/antopaulogist/experiment ~/.agents/skills/experiment
+# Claude Code, for all your projects:
+git clone https://github.com/antopaulogist/experiment ~/.claude/skills/experiment
+# Claude Code, for one project (run from that project):
+git clone https://github.com/antopaulogist/experiment .claude/skills/experiment
+```
+
+These paths come from the [Codex documentation](https://learn.chatgpt.com/docs/build-skills)
+and the [Claude Code documentation](https://code.claude.com/docs/en/skills).
+Other agents that read skills can use the same folder: copy it wherever that
+agent looks for skills, or point it at `SKILL.md`. The folder follows the open
+[Agent Skills format](https://agentskills.io/specification).
 
 ## Create your own experiment
 
