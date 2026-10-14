@@ -2,28 +2,36 @@
 
 [![Tests](https://github.com/antopaulogist/experiment/actions/workflows/tests.yml/badge.svg)](https://github.com/antopaulogist/experiment/actions/workflows/tests.yml)
 
-It's a tool that checks whether a change made by an AI actually improves
-something. You give it three things: the thing to improve (a program, some
-instructions, a piece of writing), a set of examples with the right answers,
-and a way to score an answer, such as counting the differences from the right
-one. When you ask your AI agent to run an experiment, the skill has it use
-`lab split` to shuffle the examples into two groups before trying changes.
-The AI can see the first group and try ideas on it. The second group, the
-held-back cases, goes in a folder outside the one it edits. If you already have
-a split, you can keep it.
+Find out whether a change your AI agent makes is actually an improvement.
 
-Then it runs in a loop. The AI makes one small change. The tool scores the
-result on the held-back group, keeps the change if the score improved, and
-undoes it if not. Every attempt is logged, kept or not. The held-back group
-matters because an AI scored on examples it can see can learn those examples
-instead of getting better at the task. Keeping files separate is not a guarantee
-that an agent cannot read them.
+## What it does
 
-For example, you could improve a text clean-up function that turns "at two pm"
-into "at 2pm". Give it reference answers and check that it leaves unrelated
-words alone. Try it with the [two-command toy](#try-the-toy) below.
+You give it three things:
 
-Requirements: Python 3.9+ (standard library only), Bash, Git and a logged-in agent command-line tool on macOS or Linux.
+- the thing to improve, such as a program, a prompt or a piece of writing;
+- examples with the right answers;
+- a way to score an answer, such as counting how many examples it gets wrong.
+
+Then it works in a loop. The agent makes one small change. A script scores the
+result, keeps the change if the score improved and undoes it if not. The agent
+never scores its own work. Every attempt is logged, kept or not.
+
+The score comes from examples the agent never works on. When you ask your agent
+to run an experiment, the skill has it run `lab split` first, which shuffles
+your examples into two groups. The agent can read the first group and try ideas
+on it. The second group, the held-back cases, goes in a folder outside the one
+it edits, and only the scoring uses it. An agent scored on examples it can see
+tends to learn those examples instead of getting better at the task. Keeping
+the files apart protects them by layout only: an agent that goes looking can
+still read them. If you already have your own split, you can keep it.
+
+A typical use is a text clean-up function that should turn "at two pm" into
+"at 2pm". You give it reference answers to score against and a check that it
+leaves unrelated words alone. The [two-command toy](#try-the-toy) below does
+exactly this.
+
+Requirements: Python 3.9+ (standard library only), Bash, Git and a logged-in
+agent command-line tool on macOS or Linux.
 
 ## Install for your agent
 
@@ -52,26 +60,24 @@ The command-line tool is `scripts/lab`.
 
 ## Try the toy
 
-With the Codex installation above and Codex already logged in, run these two
-commands from any folder. Choose a new output folder if `~/experiment-toy`
-already exists. The output must be outside the installed skill.
+With the Codex installation above and Codex logged in, run these two commands
+from any folder. Pick an output folder that does not exist yet and is not inside
+the installed skill.
 
 ```bash
 bash ~/.agents/skills/experiment/examples/toy/run.sh codex ~/experiment-toy
 python3 ~/.agents/skills/experiment/scripts/lab --lab-home ~/experiment-toy/lab status toy
 ```
 
-The runner creates a disposable copy of the toy and calls `lab split` on
-24 examples. The default seed, 0, is a fixed number that makes the shuffle
-repeatable. It writes 12 development examples to `project/development.jsonl`
-and 12 held-back examples to `lab/experiments/toy/held-back.jsonl` under your
-output folder. It prints both paths and records the split. For your own pool,
-use `lab split NAME CASES`; the [reference](REFERENCE.md#split-your-examples)
-explains the file format and options.
+What happens: the runner makes a disposable copy of a small project with 24
+examples and splits them with `lab split`. It writes 12 development examples to
+`project/development.jsonl` and 12 held-back examples to
+`lab/experiments/toy/held-back.jsonl` under your output folder. It scores the
+starting version (the baseline), then asks Codex for one change. The agent call
+is allowed three minutes and may cost you provider usage. Results vary between
+runs.
 
-The runner scores the starting version (the baseline), then asks Codex for
-one change. It allows three minutes for the agent call, which may incur provider
-charges. Results vary. Here is `results.tsv` from a real run with Codex CLI 0.154.0:
+From a real run with Codex CLI 0.154.0, `results.tsv` read:
 
 ```text
 n	at	score	best	verdict	note
@@ -79,7 +85,7 @@ n	at	score	best	verdict	note
 1	2026-10-14T19:03:38	9.0	9.0	keep	Convert spelled-out hours followed by am or pm into compact numeric times.
 ```
 
-The status command from that same run printed:
+and the status command printed:
 
 ```text
 toy: baseline 12.0 -> best 9.0 (lower is better); 1 attempts, 1 kept
@@ -87,11 +93,18 @@ toy: baseline 12.0 -> best 9.0 (lower is better); 1 attempts, 1 kept
   #1 keep                   9.0  Convert spelled-out hours followed by am or pm into compact numeric times.
 ```
 
-The score counts failing examples, so 9 is better than 12. The change was kept.
-A completed run can also reject a change; check the attempt record if it reports
-an agent failure. Codex was tested end to end for this example. Claude Code's
-installation paths were checked against its documentation; its live agent run
-was not tested for this release.
+The score counts failing examples, so lower is better. One change took it from
+12 to 9, and the script kept it. A run can also end with the change rejected.
+If it reports an agent failure, check the attempt record.
+
+The split uses seed 0 by default, so the same examples always split the same
+way. For your own pool of examples, run `lab split NAME CASES`. The
+[reference](REFERENCE.md#split-your-examples) explains the file format, the seed
+and the other options.
+
+This example was tested end to end with Codex. For Claude Code, the install
+paths were checked against its documentation, but a live run was not tested for
+this release.
 
 ## How it decides
 
