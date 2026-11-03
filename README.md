@@ -26,8 +26,8 @@ Then tell it what to improve. For example:
 > Improve our website chatbot's rules so it gets fewer customer questions wrong.
 
 Give it some real questions with the right answers. It tries adding, changing
-and removing rules one at a time, keeps each change that cuts the wrong
-answers, and drops the rest.
+and removing rules, keeps each change that cuts the wrong answers, and drops
+the rest.
 
 ## Install
 
@@ -109,12 +109,14 @@ each kept change.
 
 To see progress, ask your agent for the experiment's status. In a terminal, the
 same information comes from `python3 <skill folder>/scripts/lab status NAME`,
-where `<skill folder>` is the folder the skill was installed in.
+where `<skill folder>` is the folder the skill was installed in. Run it from
+the folder the experiment was started in, or it can't find the experiment.
 
 ## Cost
 
 Each try starts your agent once, and the agent can send several requests to its
-AI model during that try. These requests count against your agent's normal plan
+AI model during that try. With Claude Code, each try uses Sonnet, whichever
+model you chat with; with Codex, it uses Codex's default model. These requests count against your agent's normal plan
 or billing. Scoring that uses an AI model, such as running a chatbot on the
 held-back examples or a judge comparing answers, adds requests of its own.
 Start with a few tries so you can see the cost before a longer run.
@@ -137,9 +139,7 @@ Start with a few tries so you can see the cost before a longer run.
   computer shuts down, it can leave an unfinished record or a half-made change.
   Ask your agent to check both before running again.
 
-The skill has been tested from start to finish with Codex. For Claude Code, the
-install folders were checked against Claude Code's documentation, but a full
-run was not tested for this release.
+The skill has been tested from start to finish with Codex and with Claude Code.
 
 ## Reference
 
